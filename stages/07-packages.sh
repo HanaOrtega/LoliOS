@@ -13,8 +13,6 @@ base
 base-devel
 linux-zen
 linux-zen-headers
-linux-lts
-linux-lts-headers
 linux-firmware
 mkinitcpio
 mkinitcpio-archiso
@@ -135,13 +133,12 @@ lib32-vulkan-intel
 libva
 lib32-libva
 libvdpau
-lib32-libvdpau
 libva-mesa-driver
 lib32-libva-mesa-driver
 opencl-headers
 ocl-icd
 
-# NVIDIA DKMS stack for linux-zen/linux-lts
+# NVIDIA DKMS stack for linux-zen
 nvidia-dkms
 nvidia-utils
 lib32-nvidia-utils
@@ -366,6 +363,10 @@ yay
 EOF
 
 for bad in \
+    linux \
+    linux-headers \
+    linux-lts \
+    linux-lts-headers \
     plasma-meta \
     kde-system-meta \
     appimagelauncher \
