@@ -233,7 +233,6 @@ prune_missing_local_repo_packages() {
         pycharm-community-jre
         protonup-qt-bin
         proton-ge-custom-bin
-        heroic-games-launcher-bin
         onlyoffice-bin
         ttf-ms-fonts
         yay
@@ -271,6 +270,7 @@ log "Preparing local binary repo"
 # Bottles is intentionally not in AUR_PKGS. It is built by stages/06b-bottles-github.sh
 # directly from https://github.com/bottlesdevs/Bottles into lolios-local, so the
 # builder does not need aur.archlinux.org for Bottles.
+# Heroic Games Launcher is intentionally disabled in LoliOS ISO builds.
 AUR_PKGS=(
     calamares
     brave-bin
@@ -278,7 +278,6 @@ AUR_PKGS=(
     pycharm-community-jre
     protonup-qt-bin
     proton-ge-custom-bin
-    heroic-games-launcher-bin
     onlyoffice-bin
     ttf-ms-fonts
     yay

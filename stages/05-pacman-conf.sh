@@ -15,13 +15,9 @@ ILoveCandy
 SigLevel = Required DatabaseOptional
 LocalFileSigLevel = Optional
 
-# LoliOS owns KDE Global Theme defaults through the airootfs overlay. Do not
-# extract upstream KDE theme packages from official Plasma packages into the ISO.
-NoExtract = usr/share/plasma/look-and-feel/org.kde.*
-NoExtract = usr/share/plasma/desktoptheme/breeze/*
-NoExtract = usr/share/plasma/desktoptheme/breeze-dark/*
-NoExtract = usr/share/plasma/desktoptheme/oxygen/*
-NoExtract = usr/share/sddm/themes/breeze/*
+# LoliOS ships its own theme as an additional theme. Do not block or overwrite
+# upstream KDE/Breeze themes from Plasma packages; users must be able to switch
+# back to default KDE themes normally.
 
 # mkarchiso/pacstrap runs package transactions in a chroot without a working
 # desktop D-Bus session. PackageKit and AppStream post-transaction hooks try to

@@ -212,7 +212,7 @@ python-orjson
 imagemagick
 
 # ------------------------------------------------------------
-# Calamares installer
+# Calamares installer - Live ISO only; removed from installed system by postinstall
 # ------------------------------------------------------------
 calamares
 kpmcore
@@ -256,7 +256,6 @@ steam-devices
 lolios-game-devices-udev
 lutris
 bottles
-heroic-games-launcher-bin
 wine
 wine-mono
 wine-gecko
@@ -385,6 +384,7 @@ for bad in \
     nvidia \
     wine-staging \
     wine-ge-custom \
+    heroic-games-launcher-bin \
     mesa-vdpau \
     lib32-mesa-vdpau \
     lib32-gst-plugins-base-libs \
@@ -405,7 +405,6 @@ if [ -z "$PREBUILT_REPO_DIR" ] && [ "$USE_AUR_FALLBACK" != "1" ]; then
         rustdesk-bin \
         pycharm-community-jre \
         onlyoffice-bin \
-        heroic-games-launcher-bin \
         protonup-qt-bin \
         proton-ge-custom-bin \
         input-remapper \

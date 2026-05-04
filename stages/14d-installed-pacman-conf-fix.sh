@@ -12,8 +12,9 @@ CONF="${1:-/etc/pacman.conf}"
 [ -f "$CONF" ] || exit 0
 TMP="$(mktemp)"
 
-# Remove LoliOS NoExtract lines from every section first; they will be reinserted
-# under [options], where pacman actually accepts them.
+# Remove old LoliOS KDE-theme NoExtract rules from every section. LoliOS now
+# ships its theme as an additional theme and must not block upstream KDE/Breeze
+# themes from Plasma packages.
 awk '
 BEGIN { skip_comment=0 }
 /^# LoliOS KDE theme ownership$/ { skip_comment=1; next }
@@ -30,36 +31,17 @@ skip_comment && /^NoExtract = usr\/share\/sddm\/themes\/breeze\/\*/ { skip_comme
 /^NoExtract = usr\/share\/plasma\/desktoptheme\/oxygen\/\*/ { next }
 /^NoExtract = usr\/share\/sddm\/themes\/breeze\/\*/ { next }
 { skip_comment=0; print }
-' "$CONF" > "$TMP.clean"
-
-awk '
-BEGIN { inserted=0 }
-{
-    print
-    if (!inserted && $0 == "[options]") {
-        print ""
-        print "# LoliOS KDE theme ownership"
-        print "# LoliOS provides the Plasma Global Theme and desktop theme via system overlay."
-        print "# Do not let future plasma-workspace/breeze upgrades restore upstream KDE Global Themes."
-        print "NoExtract = usr/share/plasma/look-and-feel/org.kde.*"
-        print "NoExtract = usr/share/plasma/desktoptheme/breeze/*"
-        print "NoExtract = usr/share/plasma/desktoptheme/breeze-dark/*"
-        print "NoExtract = usr/share/plasma/desktoptheme/oxygen/*"
-        print "NoExtract = usr/share/sddm/themes/breeze/*"
-        inserted=1
-    }
-}
-END { if (!inserted) exit 2 }
-' "$TMP.clean" > "$TMP"
+' "$CONF" > "$TMP"
 
 install -m 0644 "$TMP" "$CONF"
-rm -f "$TMP" "$TMP.clean"
+rm -f "$TMP"
 EOF
 chmod +x "$PROFILE/airootfs/usr/local/bin/lolios-fix-pacman-conf-sections"
 
-# Make generated postinstall repair pacman.conf after repo setup and NoExtract insertion.
+# Make generated postinstall repair pacman.conf after repo setup. This removes
+# legacy KDE NoExtract lines from installed systems instead of reinserting them.
 if [ -f "$PROFILE/airootfs/root/postinstall.sh" ] && ! grep -q 'lolios-fix-pacman-conf-sections' "$PROFILE/airootfs/root/postinstall.sh"; then
-    sed -i '/^install_lolios_pacman_noextract$/a command -v lolios-fix-pacman-conf-sections >/dev/null 2>\&1 && lolios-fix-pacman-conf-sections /etc/pacman.conf || true' "$PROFILE/airootfs/root/postinstall.sh"
+    sed -i '/^configure_offline_local_repo$/a command -v lolios-fix-pacman-conf-sections >/dev/null 2>\&1 && lolios-fix-pacman-conf-sections /etc/pacman.conf || true' "$PROFILE/airootfs/root/postinstall.sh"
 fi
 
 # ------------------------------------------------------------

@@ -23,22 +23,29 @@ fail() {
     exit 1
 }
 
-install_lolios_pacman_noextract() {
-    local conf="/etc/pacman.conf"
+remove_legacy_lolios_kde_noextract() {
+    local conf="/etc/pacman.conf" tmp
     [ -f "$conf" ] || return 0
-    if ! grep -q '^# LoliOS KDE theme ownership$' "$conf"; then
-        cat >> "$conf" <<'EOCONF'
-
-# LoliOS KDE theme ownership
-# LoliOS provides the Plasma Global Theme and desktop theme via system overlay.
-# Do not let future plasma-workspace/breeze upgrades restore upstream KDE Global Themes.
-NoExtract = usr/share/plasma/look-and-feel/org.kde.*
-NoExtract = usr/share/plasma/desktoptheme/breeze/*
-NoExtract = usr/share/plasma/desktoptheme/breeze-dark/*
-NoExtract = usr/share/plasma/desktoptheme/oxygen/*
-NoExtract = usr/share/sddm/themes/breeze/*
-EOCONF
-    fi
+    tmp="$(mktemp)"
+    awk '
+BEGIN { skip_comment=0 }
+/^# LoliOS KDE theme ownership$/ { skip_comment=1; next }
+skip_comment && /^# LoliOS provides the Plasma Global Theme/ { next }
+skip_comment && /^# Do not let future plasma-workspace/ { next }
+skip_comment && /^NoExtract = usr\/share\/plasma\/look-and-feel\/org\.kde\.\*/ { next }
+skip_comment && /^NoExtract = usr\/share\/plasma\/desktoptheme\/breeze\/\*/ { next }
+skip_comment && /^NoExtract = usr\/share\/plasma\/desktoptheme\/breeze-dark\/\*/ { next }
+skip_comment && /^NoExtract = usr\/share\/plasma\/desktoptheme\/oxygen\/\*/ { next }
+skip_comment && /^NoExtract = usr\/share\/sddm\/themes\/breeze\/\*/ { skip_comment=0; next }
+/^NoExtract = usr\/share\/plasma\/look-and-feel\/org\.kde\.\*/ { next }
+/^NoExtract = usr\/share\/plasma\/desktoptheme\/breeze\/\*/ { next }
+/^NoExtract = usr\/share\/plasma\/desktoptheme\/breeze-dark\/\*/ { next }
+/^NoExtract = usr\/share\/plasma\/desktoptheme\/oxygen\/\*/ { next }
+/^NoExtract = usr\/share\/sddm\/themes\/breeze\/\*/ { next }
+{ skip_comment=0; print }
+' "$conf" > "$tmp"
+    install -m 0644 "$tmp" "$conf"
+    rm -f "$tmp"
 }
 
 configure_offline_local_repo() {
@@ -410,11 +417,12 @@ installed_sanity_check() {
     configured_user="$(awk -F= '/^[[:space:]]*User=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' /etc/sddm.conf.d/20-lolios-installed-autologin.conf /etc/sddm.conf 2>/dev/null || true)"
     [ "$configured_user" = "$real_user" ] || fail "Final sanity: SDDM autologin user '$configured_user' != installed user '$real_user'."
     [ -s /boot/grub/grub.cfg ] || fail "Final sanity: grub.cfg missing or empty."
+    ! grep -R '^NoExtract = usr/share/plasma/look-and-feel/org\.kde\.\*' /etc/pacman.conf 2>/dev/null || fail "Final sanity: legacy KDE theme NoExtract still blocks upstream KDE themes."
     echo "[LOLIOS] final installed-system sanity check passed"
 }
 
 configure_offline_local_repo
-install_lolios_pacman_noextract
+remove_legacy_lolios_kde_noextract
 cleanup_live_only_files
 enable_services
 setup_snapshots

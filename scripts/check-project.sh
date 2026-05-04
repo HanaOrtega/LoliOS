@@ -30,7 +30,8 @@ for required in \
     src/bin/lolios-gaming-center \
     src/bin/lolios-app-center \
     src/lib/lolios_guard.py \
-    tests/test-gaming-tools.sh
+    tests/test-gaming-tools.sh \
+    scripts/full-repo-audit.py
  do
     [ -f "$required" ] || { echo "[check] missing required file: $required" >&2; exit 1; }
 done
@@ -44,7 +45,7 @@ printf '[check] LoliOS-only guards are wired: OK\n'
 missing=0
 while IFS= read -r rel; do
     [ -f "$PROJECT_ROOT/$rel" ] || { echo "[check] missing source target: $rel" >&2; missing=1; }
-done < <(grep -o 'stages/[^"]*\.sh' build.sh)
+done < <(grep -o 'stages/[^\"]*\.sh' build.sh)
 [ "$missing" -eq 0 ]
 printf '[check] build.sh source targets exist: OK\n'
 
@@ -89,6 +90,17 @@ import json
 p='/tmp/lolios-script-audit.json'
 data=json.load(open(p))
 print(f"[check] script audit: files={data['files_checked']} errors={data['errors']} warnings={data['warnings']}")
+if data['errors']:
+    print(open(p).read())
+    raise SystemExit(1)
+PY
+
+python3 scripts/full-repo-audit.py >/tmp/lolios-full-repo-audit.json
+python3 - <<'PY'
+import json
+p='/tmp/lolios-full-repo-audit.json'
+data=json.load(open(p))
+print(f"[check] full repo audit: files={data['files_checked']} text={data['text_files_checked']} binary={data['binary_files_checked']} errors={len(data['errors'])} warnings={len(data['warnings'])}")
 if data['errors']:
     print(open(p).read())
     raise SystemExit(1)

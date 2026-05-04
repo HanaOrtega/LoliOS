@@ -15,6 +15,7 @@ audit_file() { local file="$1"; [ -f "$file" ] && audit_ok "file exists: $file" 
 audit_dir() { local dir="$1"; [ -d "$dir" ] && audit_ok "directory exists: $dir" || audit_bad "directory missing: $dir"; }
 audit_exec() { local file="$1"; [ -x "$file" ] && audit_ok "executable: $file" || audit_bad "not executable: $file"; }
 audit_grep() { local pattern="$1" file="$2" label="$3"; grep -q -- "$pattern" "$file" 2>/dev/null && audit_ok "$label" || audit_bad "$label"; }
+audit_not_grep() { local pattern="$1" file="$2" label="$3"; grep -q -- "$pattern" "$file" 2>/dev/null && audit_bad "$label" || audit_ok "$label"; }
 
 if [ -f "$LOLIOS_PROJECT_ROOT/tests/test-gaming-tools.sh" ]; then
     if bash "$LOLIOS_PROJECT_ROOT/tests/test-gaming-tools.sh"; then audit_ok "gaming/app tools repository tests passed"; else audit_bad "gaming/app tools repository tests failed"; fi
@@ -42,9 +43,11 @@ audit_file "$PROFILE/airootfs/etc/skel/.config/kdeglobals"
 audit_file "$PROFILE/airootfs/root/.config/kdeglobals"
 audit_file "$PROFILE/airootfs/etc/sddm.conf.d/10-lolios-theme.conf"
 
-grep -q '^NoExtract = usr/share/plasma/look-and-feel/org.kde\.\*' "$PROFILE/pacman.conf" && audit_ok "pacman NoExtract blocks upstream KDE Global Themes" || audit_bad "pacman NoExtract for upstream KDE Global Themes missing"
-if find "$PROFILE/airootfs/usr/share/plasma/look-and-feel" -mindepth 1 -maxdepth 1 -type d -name 'org.kde.*' 2>/dev/null | grep -q .; then find "$PROFILE/airootfs/usr/share/plasma/look-and-feel" -mindepth 1 -maxdepth 1 -type d -name 'org.kde.*' >&2; audit_bad "upstream KDE Global Theme folders present in airootfs overlay"; else audit_ok "no upstream KDE Global Theme folders in airootfs overlay"; fi
-for packaged_icon_theme in breeze breeze-dark hicolor Adwaita gnome; do [ ! -e "$PROFILE/airootfs/usr/share/icons/$packaged_icon_theme" ] && audit_ok "package-owned icon theme absent from overlay: /usr/share/icons/$packaged_icon_theme" || audit_bad "package-owned icon theme exists in overlay: /usr/share/icons/$packaged_icon_theme"; done
+audit_not_grep '^NoExtract = usr/share/plasma/look-and-feel/org.kde\.\*' "$PROFILE/pacman.conf" "pacman does not block upstream KDE Global Themes"
+audit_not_grep '^NoExtract = usr/share/plasma/desktoptheme/breeze/' "$PROFILE/pacman.conf" "pacman does not block Breeze desktop theme"
+audit_not_grep '^NoExtract = usr/share/sddm/themes/breeze/' "$PROFILE/pacman.conf" "pacman does not block Breeze SDDM theme"
+if find "$PROFILE/airootfs/usr/share/plasma/look-and-feel" -mindepth 1 -maxdepth 1 -type d -name 'org.kde.*' 2>/dev/null | grep -q .; then audit_ok "upstream KDE Global Theme folders are allowed in airootfs overlay"; else warn "upstream KDE Global Theme folders not present in overlay; they may still be package-owned in final airootfs"; fi
+for packaged_icon_theme in breeze breeze-dark hicolor Adwaita gnome; do [ -e "$PROFILE/airootfs/usr/share/icons/$packaged_icon_theme" ] && audit_ok "package-owned icon theme allowed in overlay: /usr/share/icons/$packaged_icon_theme" || warn "package-owned icon theme not present in overlay: /usr/share/icons/$packaged_icon_theme"; done
 
 audit_grep '^Inherits=.*breeze-dark.*breeze.*hicolor' "$PROFILE/airootfs/usr/share/icons/LoliOS/index.theme" "LoliOS icon theme inherits Breeze fallback"
 audit_grep '^Theme=LoliOS' "$PROFILE/airootfs/etc/skel/.config/kdeglobals" "skel KDE icon theme is LoliOS"
@@ -92,7 +95,7 @@ audit_grep 'usermod -aG wheel' "$PROFILE/airootfs/root/lolios-calamares-user-che
 
 grep -q 'rm -f /etc/sudoers.d/99-lolios-live' "$PROFILE/airootfs/root/postinstall.sh" && audit_ok "postinstall removes live sudo rules" || audit_bad "postinstall removes live sudo rules"
 grep -q 'rm -f /etc/polkit-1/rules.d/49-lolios-live-admin.rules' "$PROFILE/airootfs/root/postinstall.sh" && audit_ok "postinstall removes live polkit rules" || audit_bad "postinstall removes live polkit rules"
-grep -q '^# LoliOS KDE theme ownership$' "$PROFILE/airootfs/root/postinstall.sh" && audit_ok "postinstall persists pacman NoExtract KDE theme rules" || audit_bad "postinstall persists pacman NoExtract KDE theme rules"
+audit_grep 'remove_legacy_lolios_kde_noextract' "$PROFILE/airootfs/root/postinstall.sh" "postinstall removes legacy KDE theme NoExtract rules"
 audit_grep 'installed_sanity_check' "$PROFILE/airootfs/root/postinstall.sh" "postinstall has final installed sanity check"
 audit_grep 'Final sanity: live user still exists' "$PROFILE/airootfs/root/postinstall.sh" "postinstall rejects remaining live user"
 audit_grep 'Final sanity: /etc/lolios-live still exists' "$PROFILE/airootfs/root/postinstall.sh" "postinstall rejects remaining live marker"
@@ -106,7 +109,7 @@ audit_grep 'validate_mkinitcpio_presets' "$PROFILE/airootfs/root/postinstall.sh"
 audit_grep 'points to unreadable kernel' "$PROFILE/airootfs/root/postinstall.sh" "postinstall rejects unreadable mkinitcpio kernels"
 
 for file in \
-    "$PROFILE/airootfs/usr/local/bin/lolios-installer" "$PROFILE/airootfs/usr/local/bin/lolios-exe-runner" "$PROFILE/airootfs/usr/local/bin/lolios-exe-launcher" "$PROFILE/airootfs/usr/local/bin/lolios-profile" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-center" "$PROFILE/airootfs/usr/local/bin/lolios-app-center" "$PROFILE/airootfs/usr/local/bin/lolios-guard-status" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-gpu-profile" "$PROFILE/airootfs/usr/local/bin/lolios-update" "$PROFILE/airootfs/usr/local/bin/lolios-repair-installed-system" "$PROFILE/airootfs/usr/local/bin/lolios-set-wallpaper" "$PROFILE/airootfs/usr/local/bin/lolios-apply-kde-theme" "$PROFILE/airootfs/usr/local/bin/lolios-start-center" "$PROFILE/airootfs/usr/local/bin/lolios-live-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-installed-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-first-login-setup" "$PROFILE/airootfs/usr/local/bin/lolios-session-mode" "$PROFILE/airootfs/root/postinstall.sh"
+    "$PROFILE/airootfs/usr/local/bin/lolios-installer" "$PROFILE/airootfs/usr/local/bin/lolios-exe-runner" "$PROFILE/airootfs/usr/local/bin/lolios-exe-launcher" "$PROFILE/airootfs/usr/local/bin/lolios-profile" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-center" "$PROFILE/airootfs/usr/local/bin/lolios-app-center" "$PROFILE/airootfs/usr/local/bin/lolios-guard-status" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-gpu-profile" "$PROFILE/airootfs/usr/local/bin/lolios-update" "$PROFILE/airootfs/usr/local/bin/lolios-repair-installed-system" "$PROFILE/airootfs/usr/local/bin/lolios-set-wallpaper" "$PROFILE/airootfs/usr/local/bin/lolios-apply-kde-theme" "$PROFILE/airootfs/usr/local/bin/lolios-start-center" "$PROFILE/airootfs/usr/local/bin/lolios-live-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-installed-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-first-login-setup" "$PROFILE/airootfs/usr/local/bin/lolios-session-mode" "$PROFILE/airootfs/usr/local/bin/lolios-repair-tool-permissions" "$PROFILE/airootfs/root/postinstall.sh"
  do audit_exec "$file"; done
 
 audit_file "$PROFILE/airootfs/usr/lib/lolios/lolios_guard.py"

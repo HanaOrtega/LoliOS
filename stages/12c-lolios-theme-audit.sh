@@ -1,4 +1,4 @@
-# Sourced by ../build.sh; lightweight KDE theme ownership check
+# Sourced by ../build.sh; lightweight KDE theme availability check
 
 # 12C. KDE theme check
 # ------------------------------------------------------------
@@ -24,13 +24,16 @@ THEME_ROOT="$PROFILE/airootfs"
 [ -f "$THEME_ROOT/etc/sddm.conf.d/10-lolios-theme.conf" ] || \
     die "Missing LoliOS SDDM theme config"
 
-if find "$THEME_ROOT/usr/share/plasma/look-and-feel" -mindepth 1 -maxdepth 1 -type d -name 'org.kde.*' 2>/dev/null | grep -q .; then
-    find "$THEME_ROOT/usr/share/plasma/look-and-feel" -mindepth 1 -maxdepth 1 -type d -name 'org.kde.*' >&2
-    die "KDE upstream Global Theme folders are present in airootfs overlay"
+# LoliOS must be an additional theme, not a replacement that blocks KDE defaults.
+# Therefore upstream KDE/Breeze theme extraction must remain allowed.
+if grep -q '^NoExtract = usr/share/plasma/look-and-feel/org.kde\.\*' "$PROFILE/pacman.conf"; then
+    die "pacman.conf still blocks upstream KDE Global Theme extraction"
 fi
-
-if ! grep -q '^NoExtract = usr/share/plasma/look-and-feel/org.kde\.\*' "$PROFILE/pacman.conf"; then
-    die "pacman.conf does not block upstream KDE Global Theme extraction"
+if grep -q '^NoExtract = usr/share/plasma/desktoptheme/breeze/' "$PROFILE/pacman.conf"; then
+    die "pacman.conf still blocks Breeze desktop theme extraction"
+fi
+if grep -q '^NoExtract = usr/share/sddm/themes/breeze/' "$PROFILE/pacman.conf"; then
+    die "pacman.conf still blocks Breeze SDDM theme extraction"
 fi
 
 log "LoliOS KDE theme overlay check passed"
