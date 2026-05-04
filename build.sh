@@ -36,6 +36,7 @@ STAGES=(
   "$PROJECT_ROOT/stages/14d-calamares-postinstall-safety.sh"
   "$PROJECT_ROOT/stages/14d-installed-pacman-conf-fix.sh"
   "$PROJECT_ROOT/stages/14e-remove-installer-from-installed-system.sh"
+  "$PROJECT_ROOT/stages/14f-arch-update-policy.sh"
   "$PROJECT_ROOT/stages/14b-installed-firstboot.sh"
   "$PROJECT_ROOT/stages/14c-installed-autologin-user.sh"
   "$PROJECT_ROOT/stages/15-wallpaper-kde-defaults.sh"
