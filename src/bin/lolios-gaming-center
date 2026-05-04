@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, '/usr/lib/lolios')
+try:
+    from lolios_guard import require_lolios
+except Exception:
+    def require_lolios(tool_name='LoliOS tool'):
+        if os.environ.get('LOLIOS_DEV_ALLOW_NON_LOLIOS') == '1':
+            return
+        if pathlib.Path('/etc/lolios-live').exists() or pathlib.Path('/usr/share/lolios').exists() or pathlib.Path('/opt/lolios').exists():
+            return
+        print(f'{tool_name} is only supported on LoliOS. Set LOLIOS_DEV_ALLOW_NON_LOLIOS=1 for repo development.', file=sys.stderr)
+        raise SystemExit(72)
+
+require_lolios('LoliOS Game Center')
+
+STATE = pathlib.Path(os.environ.get('LOLIOS_EXE_STATE_DIR', pathlib.Path.home() / '.local/share/lolios/exe-launcher'))
+APPS = STATE / 'apps'
+LAUNCHER = shutil.which('lolios-exe-launcher') or '/usr/local/bin/lolios-exe-launcher'
+PROFILE_TOOL = shutil.which('lolios-profile') or '/usr/local/bin/lolios-profile'
+ADV = shutil.which('lolios-advanced-compat') or '/usr/local/bin/lolios-advanced-compat'
+NEXT = shutil.which('lolios-next-compat') or '/usr/local/bin/lolios-next-compat'
+IMPORTER = shutil.which('lolios-import-games') or '/usr/local/bin/lolios-import-games'
+GAMESCOPE_PROFILE = shutil.which('lolios-gamescope-profile') or '/usr/local/bin/lolios-gamescope-profile'
+ICON_EXTRACT = shutil.which('lolios-icon-extract') or '/usr/local/bin/lolios-icon-extract'
+APP_CENTER = shutil.which('lolios-app-center') or '/usr/local/bin/lolios-app-center'
+
+
+def command_exists(path_or_name):
+    if not path_or_name:
+        return False
+    return pathlib.Path(path_or_name).exists() or shutil.which(path_or_name) is not None
+
+
+def run_capture(cmd):
+    try:
+        return subprocess.run(cmd, text=True, capture_output=True)
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(cmd, 127, '', str(exc))
+
+
+def run_async(cmd):
+    try:
+        subprocess.Popen(cmd)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def list_profiles():
+    try:
+        data = json.loads(subprocess.check_output([LAUNCHER, '--list-json', '--category', 'game'], text=True) or '[]')
+    except Exception:
+        data = []
+    return data
+
+
+def profile_logs_dir(name):
+    return APPS / name / 'logs'
+
+
+def fallback_cli():
+    profiles = list_profiles()
+    if not profiles:
+        print('No LoliOS game profiles found. Windows applications are managed by lolios-app-center.')
+        return 0
+
+    print('LoliOS Game Center')
+    for idx, profile in enumerate(profiles, 1):
+        print(f"{idx}) {profile.get('display_name', profile.get('name'))} [{profile.get('runner', 'auto')}] {profile.get('main_exe', '')}")
+    print('0) Exit')
+    try:
+        choice = int(input('> ') or '0')
+    except ValueError:
+        return 1
+    if choice <= 0 or choice > len(profiles):
+        return 0
+
+    name = profiles[choice - 1].get('name')
+    actions = [
+        ('Run', [LAUNCHER, '--profile', name]),
+        ('Repair', [LAUNCHER, '--repair', '--profile', name]),
+        ('Rescan', [LAUNCHER, '--rescan', '--profile', name]),
+        ('Preflight', [LAUNCHER, '--preflight', '--profile', name]),
+        ('Validate', [PROFILE_TOOL, 'validate', name]),
+        ('Snapshot', [ADV, 'snapshot', name, '--reason', 'game-center']),
+        ('Rollback', [ADV, 'rollback', name]),
+        ('Save backup', [NEXT, 'save-backup', name]),
+        ('Export .loliospkg', [PROFILE_TOOL, 'export', name]),
+        ('Apply compat DB', [ADV, 'apply-compat', name]),
+        ('Runtime graph', [NEXT, 'runtime-graph', name]),
+        ('Check conflicts', [NEXT, 'check-conflicts', name]),
+        ('Crash analysis', [NEXT, 'crash-analyze', name]),
+        ('Icon extract', [ICON_EXTRACT, name]),
+        ('Uninstall profile', [NEXT, 'uninstall', name]),
+    ]
+    for idx, (label, _) in enumerate(actions, 1):
+        print(f'{idx}) {label}')
+    try:
+        action = int(input('action> ') or '0')
+    except ValueError:
+        return 1
+    if action <= 0 or action > len(actions):
+        return 0
+    return subprocess.call(actions[action - 1][1])
+
+
+class GameCenter:
+    def __init__(self):
+        import tkinter as tk
+        from tkinter import ttk
+        self.tk = tk
+        self.ttk = ttk
+        self.profiles = []
+        self.root = tk.Tk()
+        self.root.title('LoliOS Game Center')
+        self.root.geometry('1280x760')
+        self.build_ui()
+        self.refresh()
+
+    def build_ui(self):
+        tk = self.tk
+        ttk = self.ttk
+        main = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
+        main.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        left = ttk.Frame(main); right = ttk.Frame(main)
+        main.add(left, weight=3); main.add(right, weight=2)
+        top = ttk.Frame(left); top.pack(fill=tk.X, pady=(0, 6))
+        ttk.Button(top, text='Refresh', command=self.refresh).pack(side=tk.LEFT)
+        ttk.Button(top, text='Import game folder', command=self.import_folder).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text='Open App Center', command=lambda: run_async([APP_CENTER])).pack(side=tk.LEFT)
+        ttk.Button(top, text='Open Game Center JSON', command=self.show_json).pack(side=tk.LEFT, padx=4)
+        self.tree = ttk.Treeview(left, columns=('runner', 'health', 'exe'), show='headings')
+        for col, title, width in [('runner', 'Runner', 90), ('health', 'Health', 70), ('exe', 'Game / EXE', 760)]:
+            self.tree.heading(col, text=title); self.tree.column(col, width=width)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.bind('<<TreeviewSelect>>', lambda _event: self.load_details())
+        actions = ttk.Notebook(right); actions.pack(fill=tk.BOTH, expand=True)
+        self.details = tk.Text(actions, wrap='word'); actions.add(self.details, text='Profile')
+        run_tab = ttk.Frame(actions); repair_tab = ttk.Frame(actions); compat_tab = ttk.Frame(actions); security_tab = ttk.Frame(actions); tools_tab = ttk.Frame(actions)
+        actions.add(run_tab, text='Run'); actions.add(repair_tab, text='Backup/Repair'); actions.add(compat_tab, text='Compat'); actions.add(security_tab, text='Security'); actions.add(tools_tab, text='Tools')
+        self.add_buttons(run_tab, [('Run', self.run_profile), ('Repair', self.repair), ('Rescan EXE', self.rescan), ('Preflight', self.preflight), ('Validate profile', self.validate), ('Open logs', self.open_logs)])
+        self.add_buttons(repair_tab, [('Snapshot', self.snapshot), ('Rollback', self.rollback), ('Save backup', self.save_backup), ('Export .loliospkg', self.export_package), ('Uninstall profile', self.uninstall_profile)])
+        self.add_buttons(compat_tab, [('Apply game preset', self.apply_preset), ('Apply fix', self.apply_fix), ('Runtime graph', self.runtime_graph), ('Check conflicts', self.check_conflicts), ('Crash analysis', self.crash_analysis), ('Gamescope profile', self.gamescope_profile)])
+        self.add_buttons(security_tab, [('Sandbox off', lambda: self.set_value('sandbox.mode', 'off')), ('Sandbox normal', lambda: self.set_value('sandbox.mode', 'normal')), ('Sandbox strict', lambda: self.set_value('sandbox.mode', 'strict')), ('Network on', lambda: self.set_value('network.enabled', 'true')), ('Network off', lambda: self.set_value('network.enabled', 'false')), ('DLL override', self.dll_override), ('Registry patch', self.registry_patch)])
+        self.add_buttons(tools_tab, [('Icon extract', self.icon_extract), ('Import game folder', self.import_folder), ('Mark as app', lambda: self.set_category('app')), ('Show JSON', self.show_json), ('Open profile folder', self.open_profile_folder)])
+
+    def add_buttons(self, parent, buttons):
+        for label, callback in buttons:
+            self.ttk.Button(parent, text=label, command=callback).pack(anchor='w', fill='x', padx=8, pady=4)
+    def current_name(self):
+        selection = self.tree.selection(); return selection[0] if selection else None
+    def current_profile(self):
+        name = self.current_name()
+        return next((p for p in self.profiles if p.get('name') == name), None) if name else None
+    def refresh(self):
+        self.profiles = list_profiles(); self.tree.delete(*self.tree.get_children())
+        for profile in self.profiles:
+            name = profile.get('name', '?'); health = self.profile_health(name); label = f"{profile.get('display_name', name)} — {profile.get('main_exe', '')}"
+            self.tree.insert('', self.tk.END, iid=name, values=(profile.get('runner', 'auto'), health, label))
+        self.load_details()
+    def profile_health(self, name):
+        if command_exists('lolios-profile-health'):
+            result = run_capture(['lolios-profile-health', name])
+            try: return str(json.loads(result.stdout).get('score', '?'))
+            except Exception: return '?'
+        return '?'
+    def load_details(self):
+        self.details.delete('1.0', self.tk.END); profile = self.current_profile()
+        if profile: self.details.insert(self.tk.END, json.dumps(profile, indent=2, ensure_ascii=False))
+    def require_profile(self):
+        from tkinter import messagebox
+        name = self.current_name()
+        if not name:
+            messagebox.showwarning('LoliOS Game Center', 'Select a game profile first.'); return None
+        return name
+    def ask(self, title, prompt, default=''):
+        from tkinter import simpledialog
+        return simpledialog.askstring(title, prompt, initialvalue=default)
+    def confirm(self, title, message):
+        from tkinter import messagebox
+        return messagebox.askyesno(title, message)
+    def show_result(self, title, result):
+        win = self.tk.Toplevel(self.root); win.title(title); win.geometry('900x560')
+        text = self.tk.Text(win, wrap='word'); text.pack(fill=self.tk.BOTH, expand=True)
+        body = (result.stdout or '') + (('\n--- stderr ---\n' + result.stderr) if result.stderr else '')
+        text.insert(self.tk.END, body or f'exit code: {result.returncode}'); self.refresh()
+    def run_show(self, title, cmd): self.show_result(title, run_capture(cmd))
+    def run_async_profile(self, cmd):
+        name = self.require_profile()
+        if name: run_async([part.format(name=name) for part in cmd])
+    def run_profile(self): self.run_async_profile([LAUNCHER, '--profile', '{name}'])
+    def repair(self): self.run_async_profile([LAUNCHER, '--repair', '--profile', '{name}'])
+    def rescan(self):
+        name = self.require_profile()
+        if name: self.run_show('Rescan', [LAUNCHER, '--rescan', '--profile', name])
+    def preflight(self):
+        name = self.require_profile()
+        if name: self.run_show('Preflight', [LAUNCHER, '--preflight', '--profile', name])
+    def validate(self):
+        name = self.require_profile()
+        if name: self.run_show('Validate profile', [PROFILE_TOOL, 'validate', name])
+    def snapshot(self):
+        name = self.require_profile()
+        if name: self.run_show('Snapshot', [ADV, 'snapshot', name, '--reason', 'game-center'])
+    def rollback(self):
+        name = self.require_profile()
+        if name and self.confirm('Rollback', f'Rollback {name} to the latest snapshot?'): self.run_show('Rollback', [ADV, 'rollback', name])
+    def save_backup(self):
+        name = self.require_profile()
+        if name: self.run_show('Save backup', [NEXT, 'save-backup', name])
+    def export_package(self):
+        name = self.require_profile()
+        if name: self.run_show('Export .loliospkg', [PROFILE_TOOL, 'export', name])
+    def import_folder(self):
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(title='Import game folder')
+        if folder: self.run_show('Import folder', [IMPORTER, '--folder', folder])
+    def apply_preset(self):
+        name = self.require_profile(); preset = self.ask('Apply game preset', 'Preset name, e.g. modern, dx12, legacy, debug', 'modern') if name else None
+        if name and preset: self.run_show('Apply preset', [LAUNCHER, '--apply-preset', name, preset])
+    def apply_fix(self):
+        name = self.require_profile(); fix = self.ask('Apply fix', 'Fix name, e.g. install-xact, install-dotnet, disable-esync', 'install-xact') if name else None
+        if name and fix: self.run_show('Apply fix', [NEXT, 'safe-apply-fix', name, fix])
+    def runtime_graph(self):
+        name = self.require_profile()
+        if name: self.run_show('Runtime graph', [NEXT, 'runtime-graph', name])
+    def check_conflicts(self):
+        name = self.require_profile()
+        if name: self.run_show('Check conflicts', [NEXT, 'check-conflicts', name])
+    def dll_override(self):
+        name = self.require_profile()
+        if not name: return
+        dll = self.ask('DLL override', 'DLL name, e.g. dinput8, dxgi, winhttp', 'dinput8')
+        value = self.ask('DLL override', 'Override value, e.g. native,builtin or builtin', 'native,builtin') if dll else None
+        if value: self.run_show('DLL override', [NEXT, 'dll-set', name, dll, value])
+    def registry_patch(self):
+        name = self.require_profile(); patch = self.ask('Registry patch', 'Patch name, e.g. win10, win7, virtual-desktop-1080p', 'win10') if name else None
+        if name and patch: self.run_show('Registry patch', [NEXT, 'reg-apply', name, patch])
+    def gamescope_profile(self):
+        name = self.require_profile(); profile = self.ask('Gamescope profile', 'handheld, desktop-1080p, desktop-1440p, low-latency, power-save, fsr-quality', 'desktop-1080p') if name else None
+        if name and profile: self.run_show('Gamescope profile', [GAMESCOPE_PROFILE, name, profile])
+    def set_value(self, key, value):
+        name = self.require_profile()
+        if name: self.run_show('Set profile value', [LAUNCHER, '--set', name, key, value])
+    def set_category(self, category):
+        name = self.require_profile()
+        if name: self.run_show('Set category', [PROFILE_TOOL, 'set-category', name, category])
+    def icon_extract(self):
+        name = self.require_profile()
+        if name: self.run_show('Icon extract', [ICON_EXTRACT, name])
+    def crash_analysis(self):
+        name = self.require_profile()
+        if name: self.run_show('Crash analysis', [NEXT, 'crash-analyze', name])
+    def open_logs(self):
+        name = self.require_profile()
+        if name:
+            logs = profile_logs_dir(name); logs.mkdir(parents=True, exist_ok=True); run_async(['xdg-open', str(logs)])
+    def open_profile_folder(self):
+        name = self.require_profile()
+        if name:
+            folder = APPS / name; folder.mkdir(parents=True, exist_ok=True); run_async(['xdg-open', str(folder)])
+    def uninstall_profile(self):
+        name = self.require_profile()
+        if name and self.confirm('Uninstall profile', f'Remove game profile {name}?'): self.run_show('Uninstall profile', [NEXT, 'uninstall', name])
+    def show_json(self): self.show_result('Game Center JSON', subprocess.CompletedProcess(['internal-json'], 0, json.dumps(self.profiles, indent=2, ensure_ascii=False), ''))
+    def mainloop(self): self.root.mainloop()
+
+
+def main():
+    if '--json' in sys.argv:
+        print(json.dumps(list_profiles(), indent=2, ensure_ascii=False)); return
+    try:
+        GameCenter().mainloop()
+    except Exception as exc:
+        print(f'GUI unavailable or failed: {exc}', file=sys.stderr)
+        raise SystemExit(fallback_cli())
+
+if __name__ == '__main__': main()

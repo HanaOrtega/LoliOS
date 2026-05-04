@@ -1,0 +1,15 @@
+# Validation report
+
+Checks executed twice after splitting.
+
+## Pass 1
+- bash -n build.sh: OK
+- bash -n every stages/*.sh: OK
+- build.sh referenced stage files exist: OK
+- critical path invariants: OK
+
+## Pass 2
+- bash -n build.sh: OK
+- bash -n every stages/*.sh: OK
+- build.sh referenced stage files exist: OK
+- critical path invariants: OK
