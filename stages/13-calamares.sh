@@ -188,12 +188,20 @@ cat > "$PROFILE/airootfs/etc/calamares/modules/partition.conf" <<EOF
 ---
 requiredStorage: $CALAMARES_MIN_STORAGE_GB
 initialPartitioningChoice: erase
+# LoliOS is a Btrfs-first system. Keep this permanent so every Calamares install
+# uses the same filesystem model, snapshots and rollback assumptions.
+defaultFileSystemType: btrfs
+defaultFileSystem: btrfs
+availableFileSystemTypes:
+  - btrfs
+availableFileSystems:
+  - btrfs
 userSwapChoices:
   - none
-  - small
-  - suspend
   - file
-  - reuse
+mountOptions:
+  - filesystem: btrfs
+    options: defaults,noatime,compress=zstd:3,ssd,space_cache=v2
 EOF
 
 cat > "$PROFILE/airootfs/etc/calamares/modules/displaymanager.conf" <<'EOF'
