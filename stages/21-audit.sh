@@ -17,21 +17,22 @@ audit_exec() { local file="$1"; [ -x "$file" ] && audit_ok "executable: $file" |
 audit_grep() { local pattern="$1" file="$2" label="$3"; grep -q -- "$pattern" "$file" 2>/dev/null && audit_ok "$label" || audit_bad "$label"; }
 audit_not_grep() { local pattern="$1" file="$2" label="$3"; grep -q -- "$pattern" "$file" 2>/dev/null && audit_bad "$label" || audit_ok "$label"; }
 
-if [ -f "$LOLIOS_PROJECT_ROOT/tests/test-gaming-tools.sh" ]; then
-    if bash "$LOLIOS_PROJECT_ROOT/tests/test-gaming-tools.sh"; then audit_ok "gaming/app tools repository tests passed"; else audit_bad "gaming/app tools repository tests failed"; fi
+COMPAT_SUITE_TEST="$LOLIOS_PROJECT_ROOT/programs/lolios-compat-suite/tests/test-compat-suite.sh"
+if [ -f "$COMPAT_SUITE_TEST" ]; then
+    if bash "$COMPAT_SUITE_TEST"; then audit_ok "compat suite repository tests passed"; else audit_bad "compat suite repository tests failed"; fi
 else
-    audit_bad "gaming/app tools repository test script missing"
+    audit_bad "compat suite repository test script missing"
 fi
 
 for pkg in linux-zen nvidia-utils lib32-nvidia-utils plasma-workspace sddm systemsettings steam lutris bottles protontricks gamescope gamemode lib32-gamemode mangohud lib32-mangohud; do audit_pkg_present "$pkg"; done
 if [ "${LOLIOS_FLAVOR:-full}" = "full" ]; then for pkg in linux-zen-headers linux-lts linux-lts-headers nvidia-dkms; do audit_pkg_present "$pkg"; done; fi
 if local_repo_has_pkg bottles; then audit_ok "local-repo package present: bottles"; else audit_bad "local-repo package missing: bottles"; fi
 if [ -n "$PREBUILT_REPO_DIR" ] || [ "$USE_AUR_FALLBACK" = "1" ]; then
-    for pkg in heroic-games-launcher-bin protonup-qt-bin proton-ge-custom-bin pycharm-community-jre rustdesk-bin onlyoffice-bin yay; do grep -qxF "$pkg" "$PROFILE/packages.x86_64" && audit_ok "local-repo package present: $pkg" || warn "local-repo package not present: $pkg"; done
+    for pkg in protonup-qt-bin proton-ge-custom-bin pycharm-community-jre rustdesk-bin onlyoffice-bin yay; do grep -qxF "$pkg" "$PROFILE/packages.x86_64" && audit_ok "local-repo package present: $pkg" || warn "local-repo package not present: $pkg"; done
 else
     audit_ok "AUR-only optional packages may be intentionally removed"
 fi
-for pkg in nvidia wine-staging wine-ge-custom archiso-calamares-config calamares-settings-arch plasma-wayland-session mintstick flatpak flatpak-kcm game-devices-udev input-remapper lact plasma-workspace-lolios; do audit_pkg_absent "$pkg"; done
+for pkg in nvidia wine-staging wine-ge-custom heroic-games-launcher-bin archiso-calamares-config calamares-settings-arch plasma-wayland-session mintstick flatpak flatpak-kcm game-devices-udev input-remapper lact plasma-workspace-lolios; do audit_pkg_absent "$pkg"; done
 
 audit_dir "$PROFILE/airootfs/usr/share/plasma/look-and-feel/org.lolios.desktop"
 audit_file "$PROFILE/airootfs/usr/share/plasma/look-and-feel/org.lolios.desktop/metadata.json"
@@ -109,11 +110,12 @@ audit_grep 'validate_mkinitcpio_presets' "$PROFILE/airootfs/root/postinstall.sh"
 audit_grep 'points to unreadable kernel' "$PROFILE/airootfs/root/postinstall.sh" "postinstall rejects unreadable mkinitcpio kernels"
 
 for file in \
-    "$PROFILE/airootfs/usr/local/bin/lolios-installer" "$PROFILE/airootfs/usr/local/bin/lolios-exe-runner" "$PROFILE/airootfs/usr/local/bin/lolios-exe-launcher" "$PROFILE/airootfs/usr/local/bin/lolios-profile" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-center" "$PROFILE/airootfs/usr/local/bin/lolios-app-center" "$PROFILE/airootfs/usr/local/bin/lolios-guard-status" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-gpu-profile" "$PROFILE/airootfs/usr/local/bin/lolios-update" "$PROFILE/airootfs/usr/local/bin/lolios-repair-installed-system" "$PROFILE/airootfs/usr/local/bin/lolios-set-wallpaper" "$PROFILE/airootfs/usr/local/bin/lolios-apply-kde-theme" "$PROFILE/airootfs/usr/local/bin/lolios-start-center" "$PROFILE/airootfs/usr/local/bin/lolios-live-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-installed-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-first-login-setup" "$PROFILE/airootfs/usr/local/bin/lolios-session-mode" "$PROFILE/airootfs/usr/local/bin/lolios-repair-tool-permissions" "$PROFILE/airootfs/root/postinstall.sh"
+    "$PROFILE/airootfs/usr/local/bin/lolios-installer" "$PROFILE/airootfs/usr/local/bin/lolios-exe-runner" "$PROFILE/airootfs/usr/local/bin/lolios-exe-launcher" "$PROFILE/airootfs/usr/local/bin/lolios-profile" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-center" "$PROFILE/airootfs/usr/local/bin/lolios-app-center" "$PROFILE/airootfs/usr/local/bin/lolios-guard-status" "$PROFILE/airootfs/usr/local/bin/lolios-gaming-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-gpu-profile" "$PROFILE/airootfs/usr/local/bin/lolios-update" "$PROFILE/airootfs/usr/local/bin/lolios-repair-installed-system" "$PROFILE/airootfs/usr/local/bin/lolios-set-wallpaper" "$PROFILE/airootfs/usr/local/bin/lolios-apply-kde-theme" "$PROFILE/airootfs/usr/local/bin/lolios-start-center" "$PROFILE/airootfs/usr/local/bin/lolios-live-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-installed-doctor" "$PROFILE/airootfs/usr/local/bin/lolios-first-login-setup" "$PROFILE/airootfs/usr/local/bin/lolios-session-mode" "$PROFILE/airootfs/usr/local/bin/lolios-repair-tool-permissions" "$PROFILE/airootfs/usr/local/bin/lolios-verify-compat-suite" "$PROFILE/airootfs/root/postinstall.sh"
  do audit_exec "$file"; done
 
 audit_file "$PROFILE/airootfs/usr/lib/lolios/lolios_guard.py"
 audit_file "$PROFILE/airootfs/usr/share/lolios/product.json"
+audit_file "$PROFILE/airootfs/usr/share/doc/lolios-compat-suite/README"
 audit_grep '"id": "lolios"' "$PROFILE/airootfs/usr/share/lolios/product.json" "LoliOS product marker id"
 audit_grep '"name": "LoliOS"' "$PROFILE/airootfs/usr/share/lolios/product.json" "LoliOS product marker name"
 audit_grep 'lolios-gaming-center' "$PROFILE/airootfs/usr/share/lolios/product.json" "LoliOS product marker lists Game Center"
