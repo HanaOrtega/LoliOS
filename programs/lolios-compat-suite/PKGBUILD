@@ -1,0 +1,74 @@
+# Maintainer: LoliOS
+pkgname=lolios-compat-suite
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="LoliOS Game Center, App Center, EXE launcher and Windows compatibility profile tools"
+arch=('any')
+license=('custom')
+depends=('python' 'tk' 'wine' 'wine-mono' 'wine-gecko' 'winetricks')
+optdepends=(
+  'gamescope: gamescope profiles for games'
+  'gamemode: game launch optimization'
+  'mangohud: performance overlay'
+  'protontricks: Proton prefix troubleshooting'
+)
+backup=(
+  'usr/share/lolios/product.json'
+)
+
+package() {
+  cd "$srcdir/.."
+  install -Dm755 src/bin/lolios-exe-launcher "$pkgdir/usr/local/bin/lolios-exe-launcher"
+  install -Dm755 src/bin/lolios-profile "$pkgdir/usr/local/bin/lolios-profile"
+  install -Dm755 src/bin/lolios-gaming-center "$pkgdir/usr/local/bin/lolios-gaming-center"
+  install -Dm755 src/bin/lolios-app-center "$pkgdir/usr/local/bin/lolios-app-center"
+  install -Dm644 src/lib/lolios_guard.py "$pkgdir/usr/lib/lolios/lolios_guard.py"
+
+  install -d "$pkgdir/usr/share/lolios" "$pkgdir/usr/share/applications" "$pkgdir/usr/share/doc/lolios-compat-suite"
+  cat > "$pkgdir/usr/share/lolios/product.json" <<'EOF'
+{
+  "id": "lolios",
+  "name": "LoliOS",
+  "version": "rolling",
+  "exclusive_tools": [
+    "lolios-gaming-center",
+    "lolios-app-center",
+    "lolios-exe-launcher",
+    "lolios-profile"
+  ]
+}
+EOF
+
+  cat > "$pkgdir/usr/local/bin/lolios-guard-status" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+PYTHONPATH=/usr/lib/lolios python3 /usr/lib/lolios/lolios_guard.py
+EOF
+  chmod 0755 "$pkgdir/usr/local/bin/lolios-guard-status"
+
+  cat > "$pkgdir/usr/share/applications/lolios-app-center.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=LoliOS App Center
+Comment=Manage Windows applications, installers and portable EXE profiles
+Exec=/usr/local/bin/lolios-app-center
+Icon=applications-office
+Categories=LoliOS;Utility;System;
+Terminal=false
+StartupNotify=true
+EOF
+
+  cat > "$pkgdir/usr/share/applications/lolios-game-center.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=LoliOS Game Center
+Comment=Manage Windows game profiles and compatibility settings
+Exec=/usr/local/bin/lolios-gaming-center
+Icon=applications-games
+Categories=LoliOS;Game;Utility;
+Terminal=false
+StartupNotify=true
+EOF
+
+  install -Dm644 programs/lolios-compat-suite/README.md "$pkgdir/usr/share/doc/lolios-compat-suite/README.md"
+}
