@@ -3,6 +3,25 @@
 # 6. Signed binary repository and optional AUR fallback
 # ------------------------------------------------------------
 
+DISABLED_LOCAL_REPO_PKGS=(
+    heroic-games-launcher-bin
+)
+
+purge_disabled_local_repo_artifacts() {
+    local dir pkg
+    for dir in "$CUSTOMREPO" "$REPO_DIR" "$PROFILE/airootfs/opt/lolios/repo"; do
+        [ -d "$dir" ] || continue
+        for pkg in "${DISABLED_LOCAL_REPO_PKGS[@]}"; do
+            rm -f \
+                "$dir"/"$pkg"-*.pkg.tar.zst \
+                "$dir"/"$pkg"-*.pkg.tar.zst.sig \
+                "$dir"/"$pkg"-*.pkg.tar.xz \
+                "$dir"/"$pkg"-*.pkg.tar.xz.sig \
+                2>/dev/null || true
+        done
+    done
+}
+
 sign_repo_artifacts() {
     if [ "$REPO_SIGN" != "1" ]; then
         warn "REPO_SIGN=0: repo lokalne działa w trybie prototypowym bez podpisów."
@@ -47,6 +66,7 @@ import_prebuilt_repo() {
     if [ "${#sigs[@]}" -gt 0 ]; then
         cp -f "${sigs[@]}" "$CUSTOMREPO/"
     fi
+    purge_disabled_local_repo_artifacts
 }
 
 build_aur_pkg() {
@@ -82,6 +102,7 @@ build_aur_pkg() {
     fi
 
     cp ./*.pkg.tar.zst "$CUSTOMREPO/"
+    purge_disabled_local_repo_artifacts
 }
 
 build_lolios_game_devices_udev_pkg() {
@@ -169,11 +190,13 @@ PKGEOF
         warn "Brak artefaktu $GAME_DEVICES_UDEV_PKGNAME po makepkg."
         [ "$REQUIRE_GAME_DEVICES_UDEV" = "1" ] && die "Brak artefaktu $GAME_DEVICES_UDEV_PKGNAME."
     fi
+    purge_disabled_local_repo_artifacts
 }
 
 refresh_local_repo() {
     log "Refreshing local repo"
     mkdir -p "$CUSTOMREPO"
+    purge_disabled_local_repo_artifacts
 
     (
         cd "$CUSTOMREPO"
@@ -225,6 +248,7 @@ local_repo_has_pkg() {
 
 prune_missing_local_repo_packages() {
     log "Checking local-repo-only packages"
+    purge_disabled_local_repo_artifacts
 
     local optional_pkgs=(
         bottles
@@ -270,7 +294,8 @@ log "Preparing local binary repo"
 # Bottles is intentionally not in AUR_PKGS. It is built by stages/06b-bottles-github.sh
 # directly from https://github.com/bottlesdevs/Bottles into lolios-local, so the
 # builder does not need aur.archlinux.org for Bottles.
-# Heroic Games Launcher is intentionally disabled in LoliOS ISO builds.
+# Heroic Games Launcher is intentionally disabled in LoliOS ISO builds and all
+# cached/prebuilt artifacts are purged before repo databases are generated.
 AUR_PKGS=(
     calamares
     brave-bin
@@ -288,11 +313,15 @@ if [ "$ISO_STAGE" = "1" ] && [ -z "$PREBUILT_REPO_DIR" ] && [ "$USE_AUR_FALLBACK
     die "Calamares is not in official Arch repositories. Enable USE_AUR_FALLBACK=1, provide PREBUILT_REPO_DIR, or set ALLOW_INSTALLERLESS_ISO=1 for a live-only test image."
 fi
 
+purge_disabled_local_repo_artifacts
 run_repo_stage_v2
+purge_disabled_local_repo_artifacts
 build_lolios_game_devices_udev_pkg
 copy_repo_dir_to_customrepo
+purge_disabled_local_repo_artifacts
 refresh_local_repo
 copy_customrepo_to_repo_dir
+purge_disabled_local_repo_artifacts
 
 sync_embedded_local_repo() {
     log "Embedding local repo into ISO and installed system"
@@ -300,6 +329,7 @@ sync_embedded_local_repo() {
     mkdir -p "$embedded" "$PROFILE/airootfs/usr/local/bin" "$PROFILE/airootfs/etc/pacman.d"
 
     rm -rf "$embedded"/*
+    purge_disabled_local_repo_artifacts
 
     local copied_any=0
     local src base dest source_dir
@@ -319,6 +349,11 @@ sync_embedded_local_repo() {
         for src in "${repo_files[@]}"; do
             [ -e "$src" ] || continue
             base="$(basename "$src")"
+            for disabled in "${DISABLED_LOCAL_REPO_PKGS[@]}"; do
+                case "$base" in
+                    "$disabled"-*.pkg.tar.*) continue 2 ;;
+                esac
+            done
             if [ -n "${copied[$base]:-}" ]; then
                 continue
             fi
@@ -328,6 +363,7 @@ sync_embedded_local_repo() {
             copied_any=1
         done
     done
+    purge_disabled_local_repo_artifacts
 
     [ "$copied_any" = "1" ] || warn "No local repo files to embed"
 
