@@ -2,9 +2,11 @@
 set -Eeuo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPAT_SUITE="$PROJECT_ROOT/programs/lolios-compat-suite"
 cd "$PROJECT_ROOT"
 
 printf '[check] project root: %s\n' "$PROJECT_ROOT"
+printf '[check] compat suite: %s\n' "$COMPAT_SUITE"
 
 bash -n build.sh
 printf '[check] bash -n build.sh: OK\n'
@@ -14,7 +16,7 @@ for file in "$PROJECT_ROOT"/stages/*.sh; do
 done
 printf '[check] bash -n stages/*.sh: OK\n'
 
-for file in "$PROJECT_ROOT"/src/bin/* "$PROJECT_ROOT"/src/lib/*; do
+for file in "$COMPAT_SUITE"/src/bin/* "$COMPAT_SUITE"/src/lib/*; do
     [ -f "$file" ] || continue
     if head -n1 "$file" | grep -q 'python3' || [ "${file##*.}" = py ]; then
         python3 -m py_compile "$file"
@@ -22,25 +24,31 @@ for file in "$PROJECT_ROOT"/src/bin/* "$PROJECT_ROOT"/src/lib/*; do
         bash -n "$file"
     fi
 done
-printf '[check] src/bin and src/lib syntax: OK\n'
+printf '[check] compat suite src syntax: OK\n'
 
 for required in \
-    src/bin/lolios-exe-launcher \
-    src/bin/lolios-profile \
-    src/bin/lolios-gaming-center \
-    src/bin/lolios-app-center \
-    src/lib/lolios_guard.py \
-    tests/test-gaming-tools.sh \
+    programs/lolios-compat-suite/src/bin/lolios-exe-launcher \
+    programs/lolios-compat-suite/src/bin/lolios-profile \
+    programs/lolios-compat-suite/src/bin/lolios-gaming-center \
+    programs/lolios-compat-suite/src/bin/lolios-app-center \
+    programs/lolios-compat-suite/src/lib/lolios_guard.py \
+    programs/lolios-compat-suite/install-to-airootfs.sh \
+    programs/lolios-compat-suite/tests/test-compat-suite.sh \
     scripts/full-repo-audit.py
  do
     [ -f "$required" ] || { echo "[check] missing required file: $required" >&2; exit 1; }
 done
-printf '[check] required source-managed tools exist: OK\n'
+printf '[check] required compat suite files exist: OK\n'
 
-grep -q 'require_lolios("LoliOS Game Center")' src/bin/lolios-gaming-center
-grep -q 'require_lolios("LoliOS App Center")' src/bin/lolios-app-center
-grep -q 'LOLIOS_DEV_ALLOW_NON_LOLIOS' src/lib/lolios_guard.py
-printf '[check] LoliOS-only guards are wired: OK\n'
+grep -q "require_lolios('LoliOS Game Center')" programs/lolios-compat-suite/src/bin/lolios-gaming-center
+grep -q "require_lolios('LoliOS App Center')" programs/lolios-compat-suite/src/bin/lolios-app-center
+grep -q 'LOLIOS_DEV_ALLOW_NON_LOLIOS' programs/lolios-compat-suite/src/lib/lolios_guard.py
+grep -q 'programs/lolios-compat-suite' stages/17z-install-src-gaming-tools.sh
+grep -q 'PROGRAM_ROOT=' programs/lolios-compat-suite/install-to-airootfs.sh
+printf '[check] LoliOS compat suite guards/install wiring: OK\n'
+
+bash programs/lolios-compat-suite/tests/test-compat-suite.sh
+printf '[check] compat suite tests: OK\n'
 
 missing=0
 while IFS= read -r rel; do
@@ -60,7 +68,7 @@ grep -R --quiet 'mkarchiso -v -w "$ABS_WORKDIR" -o "$ABS_OUTDIR" "$ABS_PROFILE"'
 printf '[check] critical path invariants: OK\n'
 
 # KDE/theme invariants that prevent the regressions seen during ISO testing.
-grep -R --quiet 'NoExtract = usr/share/plasma/look-and-feel/org.kde\.\*' stages/05-pacman-conf.sh
+! grep -R --quiet 'NoExtract = usr/share/plasma/look-and-feel/org.kde\.\*' stages/05-pacman-conf.sh || { echo '[check] upstream KDE global themes must not be blocked' >&2; exit 1; }
 grep -R --quiet 'lolios-session-init' stages/12e-kde-theme-activation.sh
 grep -R --quiet -- '--resetLayout' stages/12e-kde-theme-activation.sh
 grep -R --quiet 'org.kde.plasma.kickoff' stages/12d-plasma-panel-layout.sh
