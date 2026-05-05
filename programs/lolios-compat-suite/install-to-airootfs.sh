@@ -8,13 +8,14 @@ fi
 
 REPO_ROOT="$(cd -- "$1" && pwd)"
 AIROOTFS="$2"
-SRC_ROOT="$REPO_ROOT/src"
+PROGRAM_ROOT="$REPO_ROOT/programs/lolios-compat-suite"
+SRC_ROOT="$PROGRAM_ROOT/src"
 
 install_tool() {
     local tool="$1"
     local src="$SRC_ROOT/bin/$tool"
     local dst="$AIROOTFS/usr/local/bin/$tool"
-    [ -f "$src" ] || { echo "missing source tool: $src" >&2; exit 1; }
+    [ -f "$src" ] || { echo "missing compat suite source tool: $src" >&2; exit 1; }
     install -Dm755 "$src" "$dst"
 }
 
