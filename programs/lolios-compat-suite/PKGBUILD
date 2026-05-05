@@ -18,11 +18,12 @@ backup=(
 
 package() {
   cd "$srcdir/.."
-  install -Dm755 src/bin/lolios-exe-launcher "$pkgdir/usr/local/bin/lolios-exe-launcher"
-  install -Dm755 src/bin/lolios-profile "$pkgdir/usr/local/bin/lolios-profile"
-  install -Dm755 src/bin/lolios-gaming-center "$pkgdir/usr/local/bin/lolios-gaming-center"
-  install -Dm755 src/bin/lolios-app-center "$pkgdir/usr/local/bin/lolios-app-center"
-  install -Dm644 src/lib/lolios_guard.py "$pkgdir/usr/lib/lolios/lolios_guard.py"
+  local appdir="programs/lolios-compat-suite"
+  install -Dm755 "$appdir/src/bin/lolios-exe-launcher" "$pkgdir/usr/local/bin/lolios-exe-launcher"
+  install -Dm755 "$appdir/src/bin/lolios-profile" "$pkgdir/usr/local/bin/lolios-profile"
+  install -Dm755 "$appdir/src/bin/lolios-gaming-center" "$pkgdir/usr/local/bin/lolios-gaming-center"
+  install -Dm755 "$appdir/src/bin/lolios-app-center" "$pkgdir/usr/local/bin/lolios-app-center"
+  install -Dm644 "$appdir/src/lib/lolios_guard.py" "$pkgdir/usr/lib/lolios/lolios_guard.py"
 
   install -d "$pkgdir/usr/share/lolios" "$pkgdir/usr/share/applications" "$pkgdir/usr/share/doc/lolios-compat-suite"
   cat > "$pkgdir/usr/share/lolios/product.json" <<'EOF'
@@ -70,5 +71,5 @@ Terminal=false
 StartupNotify=true
 EOF
 
-  install -Dm644 programs/lolios-compat-suite/README.md "$pkgdir/usr/share/doc/lolios-compat-suite/README.md"
+  install -Dm644 "$appdir/README.md" "$pkgdir/usr/share/doc/lolios-compat-suite/README.md"
 }
