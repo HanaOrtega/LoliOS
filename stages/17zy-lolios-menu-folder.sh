@@ -35,12 +35,12 @@ Icon=applications-games
 EOF
 chmod 0644 "$PROFILE/airootfs/usr/share/desktop-directories/lolios.directory"
 
-# Normalize every LoliOS-related desktop file into the LoliOS category. This
-# catches files named lolios-*.desktop and visible names containing LoliOS, plus
-# compatibility entries such as "Run Windows Program" that launch LoliOS tools.
+# Normalize every LoliOS-authored desktop file into the LoliOS category and make
+# the LoliOS folder the primary menu classification. The match deliberately
+# catches both obvious lolios-* files and older compatibility launchers that
+# execute /usr/local/bin/lolios-*.
 python3 - "$APPDIR" <<'PY'
 from pathlib import Path
-import re
 import sys
 
 appdir = Path(sys.argv[1])
@@ -51,11 +51,22 @@ lolios_exec_markers = (
     "lolios-",
     "/usr/local/bin/lolios-",
 )
+legacy_lolios_names = (
+    "run windows program",
+    "install nvidia physx",
+    "compatibility center",
+    "prefix manager",
+    "runner manager",
+)
 
 for path in sorted(appdir.glob("*.desktop")):
     text = path.read_text(errors="replace")
     lowered = (path.name + "\n" + text).lower()
-    is_lolios = "lolios" in lowered or any(marker in lowered for marker in lolios_exec_markers)
+    is_lolios = (
+        "lolios" in lowered
+        or any(marker in lowered for marker in lolios_exec_markers)
+        or any(name in lowered for name in legacy_lolios_names)
+    )
     if not is_lolios:
         continue
 
@@ -66,9 +77,9 @@ for path in sorted(appdir.glob("*.desktop")):
         if line.startswith("Categories="):
             seen_categories = True
             cats = [c for c in line.split("=", 1)[1].split(";") if c]
-            normalized = []
-            for cat in ["LoliOS", *cats]:
-                if cat not in normalized:
+            normalized = ["LoliOS"]
+            for cat in cats:
+                if cat != "LoliOS" and cat not in normalized:
                     normalized.append(cat)
             out.append("Categories=" + ";".join(normalized) + ";")
         else:
@@ -80,11 +91,11 @@ for path in sorted(appdir.glob("*.desktop")):
     path.chmod(0o644)
 PY
 
-# Sanity: all lolios-related desktop files must carry the category.
+# Sanity: all LoliOS-related desktop files must carry the primary LoliOS category.
 while IFS= read -r desktop; do
     [ -f "$desktop" ] || continue
-    if grep -Eiq 'lolios|/usr/local/bin/lolios-' "$desktop" || printf '%s\n' "$(basename "$desktop")" | grep -Eiq 'lolios'; then
-        grep -q '^Categories=.*LoliOS' "$desktop" || die "LoliOS desktop entry is not in LoliOS menu category: $desktop"
+    if grep -Eiq 'lolios|/usr/local/bin/lolios-|run windows program|install nvidia physx|compatibility center|prefix manager|runner manager' "$desktop" || printf '%s\n' "$(basename "$desktop")" | grep -Eiq 'lolios'; then
+        grep -q '^Categories=LoliOS;' "$desktop" || die "LoliOS desktop entry is not primarily in LoliOS menu category: $desktop"
     fi
 done < <(find "$APPDIR" -maxdepth 1 -type f -name '*.desktop' 2>/dev/null | sort)
 
