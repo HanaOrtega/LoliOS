@@ -1,0 +1,510 @@
+#!/usr/bin/env python3
+import argparse, datetime, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys
+from pathlib import Path
+
+STATE = Path(os.environ.get('LOLIOS_EXE_STATE_DIR', Path.home() / '.local/share/lolios/exe-launcher'))
+APPS = STATE / 'apps'
+LOCKS = STATE / 'locks'
+BASE = Path(os.environ.get('LOLIOS_PREFIX_BASE', Path.home() / 'Games/LoliOS'))
+for directory in [STATE, APPS, LOCKS, BASE]:
+    directory.mkdir(parents=True, exist_ok=True)
+
+
+def san(value):
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', str(value)).strip('_') or 'windows-app'
+
+
+def profile_path(name):
+    return APPS / san(name) / 'profile.json'
+
+
+def read_profile(name):
+    path = profile_path(name)
+    if not path.exists():
+        raise SystemExit(f'profile not found: {name}')
+    return json.load(open(path, encoding='utf-8'))
+
+
+def write_profile(name, data):
+    path = profile_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    json.dump(data, open(path, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+
+
+def migrate(name):
+    if shutil.which('lolios-profile'):
+        subprocess.run(['lolios-profile', 'migrate', san(name)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def locked(name):
+    f = open(LOCKS / f'{san(name)}.lock', 'w')
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return f
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b=''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def infer_category(exe, mode='run'):
+    text = f'{exe} {mode}'.lower()
+    app_hints = ['setup', 'installer', 'office', 'word', 'excel', 'photoshop', 'autocad', 'notepad', 'runtime', 'redist', 'vcredist', 'dotnet', 'vb6', 'tool']
+    game_hints = ['game', 'steam', 'gog', 'epic', 'unity', 'unreal', 'dx12']
+    if any(h in text for h in app_hints):
+        return 'app'
+    if any(h in text for h in game_hints):
+        return 'game'
+    return 'game'
+
+
+def detect_json(exe):
+    if shutil.which('lolios-detect-exe-runtime'):
+        try:
+            return json.loads(subprocess.check_output(['lolios-detect-exe-runtime', exe], text=True))
+        except Exception:
+            return {}
+    return {}
+
+
+def runner_best(kind):
+    if shutil.which('lolios-runner-manager'):
+        try:
+            return json.loads(subprocess.check_output(['lolios-runner-manager', 'best', kind or 'auto'], text=True) or '{}')
+        except Exception:
+            return {}
+    wine = shutil.which('wine')
+    return {'type': 'wine', 'path': wine} if wine else {'type': 'wine', 'path': 'wine'}
+
+
+def log_path(name, kind):
+    logs = APPS / san(name) / 'logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    return logs / f'{kind}-{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.log'
+
+
+def ensure_profile_defaults(profile):
+    name = san(profile.get('name') or Path(profile.get('main_exe', 'app')).stem)
+    profile['name'] = name
+    profile.setdefault('display_name', name)
+    profile.setdefault('category', infer_category(profile.get('main_exe', ''), profile.get('mode', 'run')))
+    profile.setdefault('runner', 'auto')
+    profile.setdefault('arch', 'win64')
+    profile.setdefault('wine_prefix', str(BASE / name / 'prefix'))
+    profile.setdefault('proton_compat_data', str(BASE / name / 'compatdata'))
+    profile.setdefault('features', {})
+    for key, value in {'dxvk': True, 'vkd3d': False, 'gamemode': True, 'mangohud': False, 'gamescope': False, 'gamescope_args': '-f', 'prime': 'auto'}.items():
+        profile['features'].setdefault(key, value)
+    defaults = {
+        'env': {},
+        'winetricks': [],
+        'custom_runtimes': [],
+        'installed_runtimes': [],
+        'dll_overrides': {},
+        'sandbox': {'mode': 'normal', 'allow_paths': []},
+        'network': {'enabled': True, 'mode': 'online'},
+        'path_mounts': [],
+        'locale': {},
+        'audio_profile': {},
+        'controller_profile': {},
+        'font_profile': {},
+        'codec_profile': {},
+        'executables': [],
+        'launch_history': [],
+        'last_known_good': {},
+        'offline_runtime': True,
+    }
+    for key, value in defaults.items():
+        profile.setdefault(key, value)
+    return profile
+
+
+def update_file_identity(profile):
+    exe = profile.get('main_exe')
+    if exe and Path(exe).exists():
+        profile['file_identity'] = {'sha256': sha256(exe), 'size': Path(exe).stat().st_size}
+
+
+def create_profile(exe, mode='run', name=None, runner='auto', arch='win64', category=None):
+    if not Path(exe).exists():
+        raise SystemExit(f'file missing: {exe}')
+    safe = san(name or Path(exe).stem)
+    detection = detect_json(exe)
+    features = detection.get('recommended_features', {})
+    profile = ensure_profile_defaults({
+        'schema_version': 6,
+        'name': safe,
+        'display_name': name or Path(exe).stem,
+        'category': category or infer_category(exe, mode),
+        'mode': mode,
+        'main_exe': str(Path(exe).resolve()),
+        'installer_exe': str(Path(exe).resolve()) if mode == 'install' else '',
+        'runner': runner,
+        'arch': arch,
+        'wine_prefix': str(BASE / safe / 'prefix'),
+        'proton_compat_data': str(BASE / safe / 'compatdata'),
+        'features': {
+            'dxvk': features.get('dxvk', True),
+            'vkd3d': features.get('vkd3d', False),
+            'gamemode': category != 'app',
+            'mangohud': False,
+            'gamescope': False,
+            'prime': 'auto',
+        },
+        'winetricks': [],
+        'recommended_winetricks': detection.get('recommended_winetricks', []),
+        'custom_runtimes': detection.get('recommended_custom', []),
+        'env': {},
+        'executables': [{'id': 'main', 'name': name or Path(exe).stem, 'path': str(Path(exe).resolve()), 'default': True}],
+    })
+    update_file_identity(profile)
+    write_profile(safe, profile)
+    migrate(safe)
+    return safe
+
+
+def apply_profile_env(profile):
+    env = os.environ.copy()
+    wine_prefix = profile.get('wine_prefix') or profile.get('prefix')
+    env['WINEPREFIX'] = wine_prefix
+    Path(wine_prefix).mkdir(parents=True, exist_ok=True)
+    arch = profile.get('arch')
+    if arch in ['win32', 'win64'] and not (Path(wine_prefix) / 'system.reg').exists():
+        env['WINEARCH'] = arch
+    env.setdefault('WINEDEBUG', '-all')
+    env.setdefault('DXVK_LOG_LEVEL', 'none')
+    env.setdefault('VKD3D_DEBUG', 'none')
+    env.setdefault('WINEDLLOVERRIDES', '')
+    env.update({str(k): str(v) for k, v in profile.get('env', {}).items()})
+    env.update({str(k): str(v) for k, v in profile.get('locale', {}).items()})
+    if profile.get('dll_overrides'):
+        extra_overrides = ';'.join(f'{k}={v}' for k, v in profile['dll_overrides'].items())
+        env['WINEDLLOVERRIDES'] = ';'.join(x for x in [env.get('WINEDLLOVERRIDES', ''), extra_overrides] if x)
+    if profile.get('features', {}).get('prime') == 'yes':
+        env.update({'__NV_PRIME_RENDER_OFFLOAD': '1', '__GLX_VENDOR_LIBRARY_NAME': 'nvidia', '__VK_LAYER_NV_optimus': 'NVIDIA_only'})
+    if profile.get('network', {}).get('enabled') is False:
+        env['LOLIOS_NETWORK_DISABLED'] = '1'
+    run = runner_best(profile.get('runner', 'auto'))
+    if run.get('type') == 'proton':
+        env['STEAM_COMPAT_DATA_PATH'] = profile.get('proton_compat_data', '')
+    if profile.get('audio_profile'):
+        env.setdefault('PULSE_LATENCY_MSEC', '60' if profile['audio_profile'].get('mode') == 'compatibility' else '30')
+    if profile.get('controller_profile'):
+        env.setdefault('SDL_GAMECONTROLLERCONFIG', profile['controller_profile'].get('sdl_gamecontrollerconfig', ''))
+    return env
+
+
+def installed_marker(prefix, name):
+    marker_dir = Path(prefix) / '.lolios-runtime'
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    return marker_dir / name
+
+
+def find_wine_mono_msi():
+    roots = [Path('/usr/share/wine/mono'), Path('/usr/share/wine')]
+    candidates = []
+    for root in roots:
+        if root.exists():
+            candidates += list(root.rglob('wine-mono-*.msi'))
+    return sorted(candidates)[-1] if candidates else None
+
+
+def find_wine_gecko_msis():
+    roots = [Path('/usr/share/wine/gecko'), Path('/usr/share/wine')]
+    candidates = []
+    for root in roots:
+        if root.exists():
+            candidates += list(root.rglob('wine-gecko-*.msi'))
+    return sorted(candidates)
+
+
+def install_msi(env, msi, log_file):
+    wine = shutil.which('wine') or 'wine'
+    return subprocess.run([wine, 'msiexec', '/i', str(msi), '/qn'], env=env, stdout=log_file, stderr=log_file).returncode
+
+
+def prepare_builtin_runtime(profile, env, log_file):
+    prefix = env['WINEPREFIX']
+    wineboot = shutil.which('wineboot')
+    if wineboot:
+        subprocess.run([wineboot, '-u'], env=env, stdout=log_file, stderr=log_file)
+    mono_marker = installed_marker(prefix, 'mono.ok')
+    if not mono_marker.exists():
+        mono = find_wine_mono_msi()
+        if mono:
+            print(f'LOLIOS: installing local Wine Mono: {mono}', file=log_file)
+            if install_msi(env, mono, log_file) == 0:
+                mono_marker.touch()
+        else:
+            print('LOLIOS: wine-mono MSI not found under /usr/share/wine; package wine-mono is missing', file=log_file)
+    gecko_marker = installed_marker(prefix, 'gecko.ok')
+    if not gecko_marker.exists():
+        geckos = find_wine_gecko_msis()
+        if geckos:
+            for gecko in geckos:
+                print(f'LOLIOS: installing local Wine Gecko: {gecko}', file=log_file)
+                install_msi(env, gecko, log_file)
+            gecko_marker.touch()
+        else:
+            print('LOLIOS: wine-gecko MSI not found under /usr/share/wine; package wine-gecko is missing', file=log_file)
+
+
+def should_run_winetricks(profile):
+    if os.environ.get('LOLIOS_DISABLE_WINETRICKS', '0') == '1':
+        return False
+    if profile.get('network', {}).get('enabled') is False:
+        return False
+    return bool(profile.get('winetricks'))
+
+
+def prepare_prefix(profile, log_file):
+    env = apply_profile_env(profile)
+    ready = Path(env['WINEPREFIX']) / '.lolios-ready'
+    if ready.exists():
+        return
+    prepare_builtin_runtime(profile, env, log_file)
+    tricks = list(dict.fromkeys(profile.get('winetricks', [])))
+    if profile.get('runtime_policy') == 'apply-profile-extras':
+        tricks += (['dxvk'] if profile.get('features', {}).get('dxvk') else [])
+        tricks += (['vkd3d'] if profile.get('features', {}).get('vkd3d') else [])
+        if profile.get('audio_profile', {}).get('mode') in ['xaudio', 'compatibility']:
+            tricks += ['xact', 'xinput']
+        if profile.get('font_profile', {}).get('preset') == 'corefonts':
+            tricks += ['corefonts']
+        if profile.get('codec_profile', {}).get('preset') in ['mf', 'full']:
+            tricks += ['mf', 'quartz']
+    tricks = list(dict.fromkeys([t for t in tricks if t]))
+    missing = [t for t in tricks if profile.get('runtime_policy') != 'missing-only' or t not in profile.get('installed_runtimes', [])]
+    if missing:
+        if shutil.which('winetricks') and should_run_winetricks(profile):
+            subprocess.run(['winetricks', '-q'] + missing, env=env, stdout=log_file, stderr=log_file)
+            profile['installed_runtimes'] = list(dict.fromkeys(profile.get('installed_runtimes', []) + missing))
+        else:
+            print(f'LOLIOS: skipping winetricks verbs without explicit online/runtime policy: {missing}', file=log_file)
+    profile['installed_runtimes'] = list(dict.fromkeys(profile.get('installed_runtimes', []) + ['wine-mono-local', 'wine-gecko-local']))
+    ready.touch()
+
+
+def build_command(profile, extra_args, exe_override=None):
+    f = profile.get('features', {})
+    cmd = []
+    if f.get('gamescope') and shutil.which('gamescope'):
+        cmd += ['gamescope'] + shlex.split(str(f.get('gamescope_args', '-f'))) + ['--']
+    if f.get('gamemode') and shutil.which('gamemoderun'):
+        cmd += ['gamemoderun']
+    if f.get('mangohud') and shutil.which('mangohud'):
+        cmd += ['mangohud']
+    exe = exe_override or profile.get('main_exe')
+    run = runner_best(profile.get('runner', 'auto'))
+    cmd += [run['path'], 'run', exe] if run.get('type') == 'proton' else [shutil.which('wine') or 'wine', exe]
+    cmd += shlex.split(profile.get('arguments', '') or '') + extra_args
+    return cmd
+
+
+def run_profile(name, extra_args, exe_id=None):
+    migrate(name)
+    lock_handle = locked(name)
+    profile = ensure_profile_defaults(read_profile(name))
+    update_file_identity(profile)
+    exe_override = None
+    if exe_id:
+        for item in profile.get('executables', []):
+            if item.get('id') == exe_id:
+                exe_override = item.get('path')
+        if not exe_override:
+            raise SystemExit(f'executable id not found: {exe_id}')
+    exe = exe_override or profile.get('main_exe')
+    if not exe or not Path(exe).exists():
+        raise SystemExit(f'main_exe missing: {exe}')
+    log_file_path = log_path(name, 'run')
+    with open(log_file_path, 'w', encoding='utf-8') as log_file:
+        prepare_prefix(profile, log_file)
+        env = apply_profile_env(profile)
+        cmd = build_command(profile, extra_args, exe_override)
+        print('CMD:', cmd, file=log_file)
+        started = datetime.datetime.utcnow()
+        rc = subprocess.run(cmd, env=env, stdout=log_file, stderr=log_file).returncode
+    profile.setdefault('launch_history', []).append({'time': started.isoformat() + 'Z', 'exit_code': rc, 'log': str(log_file_path), 'profile_enforced': True})
+    profile['launch_history'] = profile['launch_history'][-20:]
+    if rc == 0:
+        profile['last_known_good'] = {'time': datetime.datetime.utcnow().isoformat() + 'Z', 'runner': profile.get('runner'), 'features': profile.get('features'), 'winetricks': profile.get('winetricks'), 'env': profile.get('env')}
+    write_profile(name, profile)
+    lock_handle.close()
+    return rc
+
+
+def rescan_profile(name):
+    profile = ensure_profile_defaults(read_profile(name))
+    root = Path(profile.get('wine_prefix')) / 'drive_c'
+    candidates = []
+    for exe in (root if root.exists() else Path(profile.get('wine_prefix'))).rglob('*.exe'):
+        low = str(exe).lower()
+        score = 0
+        if 'program files' in low:
+            score += 60
+        if san(profile.get('display_name', '')).lower() in san(exe.name).lower():
+            score += 50
+        if re.search(r'unins|uninstall|setup|redist|vcredist|dxsetup|crash|helper|service|updater', low):
+            score -= 120
+        candidates.append((score, str(exe)))
+    if not candidates:
+        raise SystemExit('no exe candidates found')
+    profile['main_exe'] = sorted(candidates, reverse=True)[0][1]
+    write_profile(name, profile)
+    print(profile['main_exe'])
+
+
+def set_option(name, key, value):
+    profile = ensure_profile_defaults(read_profile(name))
+    target = profile
+    parts = key.split('.')
+    for part in parts[:-1]:
+        target = target.setdefault(part, {})
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        parsed = value
+    target[parts[-1]] = parsed
+    write_profile(name, profile)
+
+
+def apply_preset(name, preset):
+    if not shutil.which('lolios-compat-presets'):
+        raise SystemExit('lolios-compat-presets missing')
+    data = json.loads(subprocess.check_output(['lolios-compat-presets', preset], text=True))
+    profile = ensure_profile_defaults(read_profile(name))
+    for key in ['runner', 'arch', 'env']:
+        if key in data:
+            profile[key] = data[key]
+    profile.setdefault('features', {}).update(data.get('features', {}))
+    for item in data.get('winetricks', []):
+        if item not in profile.setdefault('winetricks', []):
+            profile['winetricks'].append(item)
+    profile['runtime_policy'] = data.get('runtime_policy', 'apply-profile-extras')
+    profile['preset'] = preset
+    write_profile(name, profile)
+
+
+def preflight(name=None, exe=None):
+    if shutil.which('lolios-exe-preflight'):
+        cmd = ['lolios-exe-preflight'] + (['--profile', name] if name else []) + (['--exe', exe] if exe else [])
+        subprocess.run(cmd)
+    else:
+        print(json.dumps({'wine': bool(shutil.which('wine')), 'wineboot': bool(shutil.which('wineboot')), 'winetricks': bool(shutil.which('winetricks')), 'wine_mono_msi': str(find_wine_mono_msi() or ''), 'wine_gecko_msi_count': len(find_wine_gecko_msis()), 'profile': name, 'exe': exe}, indent=2))
+
+
+def install_flow(exe, args):
+    name = create_profile(exe, 'install', args.name, args.runner, args.arch, args.category)
+    profile = ensure_profile_defaults(read_profile(name))
+    log_file_path = log_path(name, 'install')
+    with open(log_file_path, 'w', encoding='utf-8') as log_file:
+        prepare_prefix(profile, log_file)
+        subprocess.run([shutil.which('wine') or 'wine', exe], env=apply_profile_env(profile), stdout=log_file, stderr=log_file)
+    write_profile(name, profile)
+    try:
+        rescan_profile(name)
+    except Exception:
+        pass
+
+
+def run_aux(mode, exe, profile_name):
+    profile = ensure_profile_defaults(read_profile(profile_name))
+    log_file_path = log_path(profile_name, mode)
+    with open(log_file_path, 'w', encoding='utf-8') as log_file:
+        prepare_prefix(profile, log_file)
+        subprocess.run([shutil.which('wine') or 'wine', exe], env=apply_profile_env(profile), stdout=log_file, stderr=log_file)
+    if mode == 'patch':
+        try:
+            rescan_profile(profile_name)
+        except Exception:
+            pass
+
+
+def list_json(category=None):
+    items = []
+    for p in APPS.glob('*/profile.json'):
+        j = json.load(open(p, encoding='utf-8'))
+        j = ensure_profile_defaults(j)
+        if category and j.get('category') != category:
+            continue
+        items.append(j)
+    print(json.dumps(items, indent=2, ensure_ascii=False))
+
+
+def main():
+    parser = argparse.ArgumentParser(description='LoliOS shared EXE launcher for game and app profiles')
+    sub = parser.add_subparsers(dest='cmd')
+    p = sub.add_parser('install')
+    p.add_argument('exe')
+    p.add_argument('--name')
+    p.add_argument('--runner', default='auto')
+    p.add_argument('--arch', default='win64')
+    p.add_argument('--category', choices=['game', 'app'])
+    p = sub.add_parser('patch')
+    p.add_argument('exe')
+    p.add_argument('--profile', required=True)
+    p = sub.add_parser('runtime')
+    p.add_argument('exe')
+    p.add_argument('--profile', required=True)
+    p = sub.add_parser('run')
+    p.add_argument('--profile', required=True)
+    p.add_argument('--exe-id')
+    p.add_argument('extra', nargs=argparse.REMAINDER)
+    parser.add_argument('--profile')
+    parser.add_argument('--exe-id')
+    parser.add_argument('--repair', action='store_true')
+    parser.add_argument('--rescan', action='store_true')
+    parser.add_argument('--set', nargs=3, metavar=('PROFILE', 'KEY', 'VALUE'))
+    parser.add_argument('--preflight', action='store_true')
+    parser.add_argument('--apply-preset', nargs=2, metavar=('PROFILE', 'PRESET'))
+    parser.add_argument('--list-json', action='store_true')
+    parser.add_argument('--category', choices=['game', 'app'])
+    parser.add_argument('--manage', action='store_true')
+    parser.add_argument('file_or_args', nargs='*')
+    args = parser.parse_args()
+    if args.list_json:
+        list_json(args.category)
+        return
+    if args.manage:
+        target = 'lolios-app-center' if args.category == 'app' else 'lolios-gaming-center'
+        if shutil.which(target):
+            os.execvp(target, [target])
+        list_json(args.category)
+        return
+    if args.set:
+        set_option(*args.set)
+        return
+    if args.apply_preset:
+        apply_preset(args.apply_preset[0], args.apply_preset[1])
+        return
+    if args.preflight:
+        preflight(args.profile, args.file_or_args[0] if args.file_or_args else None)
+        return
+    if args.repair and args.profile:
+        migrate(args.profile)
+        print('repaired')
+        return
+    if args.rescan and args.profile:
+        rescan_profile(args.profile)
+        return
+    if args.cmd == 'install':
+        install_flow(args.exe, args)
+        return
+    if args.cmd in ['patch', 'runtime']:
+        run_aux(args.cmd, args.exe, args.profile)
+        return
+    if args.cmd == 'run':
+        sys.exit(run_profile(args.profile, [x for x in args.extra if x != '--'], args.exe_id))
+    if args.profile:
+        sys.exit(run_profile(args.profile, args.file_or_args, args.exe_id))
+    if args.file_or_args:
+        name = create_profile(args.file_or_args[0], category=args.category)
+        sys.exit(run_profile(name, []))
+    parser.print_help()
+
+
+if __name__ == '__main__':
+    main()
